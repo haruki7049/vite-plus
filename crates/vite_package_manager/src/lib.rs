@@ -79,7 +79,7 @@ pub enum DependencyType {
     Peer,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageJson {
     #[serde(default)]
@@ -94,6 +94,24 @@ pub struct PackageJson {
     pub peer_dependencies: HashMap<CompactString, CompactString>,
 }
 
+impl std::fmt::Debug for PackageJson {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if std::env::var("VITE_DEBUG_VERBOSE").map(|v| v != "0" && v != "false").unwrap_or(false) {
+            write!(
+                f,
+                "PackageJson {{ name: {:?}, scripts: {:?}, dependencies: {:?}, dev_dependencies: {:?}, peer_dependencies: {:?} }}",
+                self.name,
+                self.scripts,
+                self.dependencies,
+                self.dev_dependencies,
+                self.peer_dependencies
+            )
+        } else {
+            write!(f, "PackageJson {{ name: {:?}, scripts: {:?} }}", self.name, self.scripts)
+        }
+    }
+}
+
 impl PackageJson {
     fn get_workspace_dependencies(
         &self,
@@ -103,14 +121,14 @@ impl PackageJson {
             .map(|entry| (entry, DependencyType::Normal))
             .chain(self.dev_dependencies.iter().map(|entry| (entry, DependencyType::Dev)))
             .chain(self.peer_dependencies.iter().map(|entry| (entry, DependencyType::Peer)))
-            .flat_map(|((key, value), dep_type)| {
+            .filter_map(|((key, value), dep_type)| {
                 let Some(workspace_version) = value.strip_prefix("workspace:") else {
                     // TODO: support link-workspace-packages: https://pnpm.io/workspaces#workspace-protocol-workspace)
                     return None;
                 };
                 // TODO: support paths: https://github.com/pnpm/pnpm/pull/2972
                 Some((
-                    if let Some((name, _)) = workspace_version.rsplit_once("@") {
+                    if let Some((name, _)) = workspace_version.rsplit_once('@') {
                         CompactString::new(name)
                     } else {
                         key.clone()
@@ -152,8 +170,9 @@ impl PackageGraphBuilder {
         }
         Ok(())
     }
+
     fn build(mut self) -> Graph<PackageInfo, DependencyType> {
-        for (_, (id, deps)) in &self.id_and_deps_by_name {
+        for (id, deps) in self.id_and_deps_by_name.values() {
             for (dep_name, dep_type) in deps {
                 let dep_id = self.id_and_deps_by_name[dep_name].0;
                 self.graph.add_edge(*id, dep_id, *dep_type);
@@ -162,6 +181,7 @@ impl PackageGraphBuilder {
         self.graph
     }
 }
+
 pub fn get_package_graph(
     workspace_root: impl AsRef<Path>,
 ) -> Result<Graph<PackageInfo, DependencyType>, Error> {
@@ -185,7 +205,7 @@ pub fn get_package_graph(
         })?;
         let package_path = package_path
             .to_str()
-            .with_context(|| format!("Package path {:?} is not valid UTF-8", package_path))?;
+            .with_context(|| format!("Package path {package_path:?} is not valid UTF-8"))?;
 
         has_root_package = has_root_package || package_path.is_empty();
         graph_builder.add_package(package_path.into(), package_json)?;
