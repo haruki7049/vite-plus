@@ -5,24 +5,14 @@ import path from 'node:path';
 import * as prompts from '@clack/prompts';
 import spawn from 'cross-spawn';
 
+import { rewriteMonorepoProject } from '../../migration/migrator.ts';
+import { PackageManager, type WorkspaceInfo } from '../../types/index.ts';
+import { editJsonFile, templatesDir } from '../../utils/index.ts';
+import type { ExecutionResult } from '../command.ts';
 import { discoverTemplate } from '../discovery.ts';
-import { migrateToVitePlus } from '../migration.ts';
-import {
-  type BuiltinTemplateInfo,
-  type ExecutionResult,
-  PackageManager,
-  type WorkspaceInfo,
-} from '../types.ts';
-import {
-  copyDir,
-  editJsonFile,
-  getScopeFromPackageName,
-  renameFiles,
-  setPackageManager,
-  setPackageName,
-  templatesDir,
-} from '../utils.ts';
+import { copyDir, setPackageName } from '../utils.ts';
 import { runRemoteTemplateCommand } from './remote.ts';
+import { type BuiltinTemplateInfo } from './types.ts';
 
 // Execute vite:monorepo - copy from templates/monorepo
 export async function executeMonorepoTemplate(
@@ -88,7 +78,6 @@ export async function executeMonorepoTemplate(
     }
   }
 
-  setPackageManager(fullPath, workspaceInfo.downloadPackageManager);
   prompts.log.success('Monorepo template created');
 
   // Ask user to init git repository or auto-init if --no-interactive
@@ -143,20 +132,17 @@ export async function executeMonorepoTemplate(
   const appPackageName = workspaceInfo.monorepoScope
     ? `${workspaceInfo.monorepoScope}/website`
     : 'website';
-  setPackageName(path.join(fullPath, appDir), appPackageName);
+  const appProjectPath = path.join(fullPath, appDir);
+  setPackageName(appProjectPath, appPackageName);
   // Perform auto-migration on the created app
-  await migrateToVitePlus(
-    appDir,
-    fullPath, // The monorepo directory
-    true, // Always in monorepo context
-  );
+  rewriteMonorepoProject(appProjectPath, workspaceInfo.packageManager);
 
   // Automatically create a default library in packages/utils
   prompts.log.step('Creating default library in packages/utils...');
   const libraryDir = 'packages/utils';
   const libraryTemplateInfo = discoverTemplate(
     'create-tsdown@latest',
-    [libraryDir, '--template', 'default', '--no-interactive'],
+    [libraryDir, '--template', 'default'],
     workspaceInfo,
   );
   const libraryResult = await runRemoteTemplateCommand(
@@ -172,13 +158,32 @@ export async function executeMonorepoTemplate(
   const libraryPackageName = workspaceInfo.monorepoScope
     ? `${workspaceInfo.monorepoScope}/utils`
     : 'utils';
-  setPackageName(path.join(fullPath, libraryDir), libraryPackageName);
+  const libraryProjectPath = path.join(fullPath, libraryDir);
+  setPackageName(libraryProjectPath, libraryPackageName);
   // Perform auto-migration on the created library
-  await migrateToVitePlus(
-    libraryDir,
-    fullPath, // The monorepo directory
-    true, // Always in monorepo context
-  );
+  rewriteMonorepoProject(libraryProjectPath, workspaceInfo.packageManager);
 
   return { exitCode: 0, projectDir: templateInfo.targetDir };
+}
+
+const RENAME_FILES: Record<string, string> = {
+  _gitignore: '.gitignore',
+  _npmrc: '.npmrc',
+  '_yarnrc.yml': '.yarnrc.yml',
+};
+
+function renameFiles(projectDir: string) {
+  for (const [from, to] of Object.entries(RENAME_FILES)) {
+    const fromPath = path.join(projectDir, from);
+    if (fs.existsSync(fromPath)) {
+      fs.renameSync(fromPath, path.join(projectDir, to));
+    }
+  }
+}
+
+function getScopeFromPackageName(packageName: string) {
+  if (packageName.startsWith('@')) {
+    return packageName.split('/')[0];
+  }
+  return '';
 }
