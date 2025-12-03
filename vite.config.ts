@@ -1,6 +1,6 @@
-import { defineConfig } from '@voidzero-dev/vite-plus';
+import type { UserConfig } from '@voidzero-dev/vite-plus';
 
-export default defineConfig({
+export default (<UserConfig>{
   lint: {
     rules: {
       'no-console': 'warn',
